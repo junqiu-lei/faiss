@@ -46,6 +46,8 @@ IndexIVFPQFastScan::IndexIVFPQFastScan(
         : IndexIVFFastScan(quantizer, d, nlist, 0, metric), pq(d, M, nbits) {
     by_residual = false; // set to false by default because it's faster
 
+    precomputed_table = new AlignedTable<float>();
+    owns_precomputed_table = true;
     init_fastscan(M, nbits, nlist, metric, bbs);
 }
 
@@ -53,6 +55,17 @@ IndexIVFPQFastScan::IndexIVFPQFastScan() {
     by_residual = false;
     bbs = 0;
     M2 = 0;
+    precomputed_table = new AlignedTable<float>();
+    owns_precomputed_table = true;
+}
+
+IndexIVFPQFastScan::IndexIVFPQFastScan(const IndexIVFPQFastScan& orig)
+        : IndexIVFFastScan(orig), pq(orig.pq) {
+    by_residual = orig.by_residual;
+    bbs = orig.bbs;
+    M2 = orig.M2;
+    precomputed_table = new AlignedTable<float>(*orig.precomputed_table);
+    owns_precomputed_table = true;
 }
 
 IndexIVFPQFastScan::IndexIVFPQFastScan(const IndexIVFPQ& orig, int bbs)
@@ -71,13 +84,15 @@ IndexIVFPQFastScan::IndexIVFPQFastScan(const IndexIVFPQ& orig, int bbs)
     ntotal = orig.ntotal;
     is_trained = orig.is_trained;
     nprobe = orig.nprobe;
+    precomputed_table = new AlignedTable<float>();
+    owns_precomputed_table = true;
 
-    precomputed_table.resize(orig.precomputed_table.size());
+    precomputed_table->resize(orig.precomputed_table->size());
 
-    if (precomputed_table.nbytes() > 0) {
-        memcpy(precomputed_table.get(),
-               orig.precomputed_table.data(),
-               precomputed_table.nbytes());
+    if (precomputed_table->nbytes() > 0) {
+        memcpy(precomputed_table->get(),
+               orig.precomputed_table->data(),
+               precomputed_table->nbytes());
     }
 
     for (size_t i = 0; i < nlist; i++) {
@@ -100,6 +115,12 @@ IndexIVFPQFastScan::IndexIVFPQFastScan(const IndexIVFPQ& orig, int bbs)
     }
 
     orig_invlists = orig.invlists;
+}
+
+IndexIVFPQFastScan::~IndexIVFPQFastScan() {
+    if (owns_precomputed_table) {
+        delete precomputed_table;
+    }
 }
 
 /*********************************************************
@@ -127,9 +148,21 @@ void IndexIVFPQFastScan::precompute_table() {
             use_precomputed_table,
             quantizer,
             pq,
-            precomputed_table,
+            *precomputed_table,
             by_residual,
             verbose);
+}
+
+void IndexIVFPQFastScan::set_precomputed_table(
+        AlignedTable<float>* _precompute_table,
+        int _use_precomputed_table) {
+    // Clean up old pre-computed table
+    if (owns_precomputed_table) {
+        delete precomputed_table;
+    }
+    owns_precomputed_table = false;
+    precomputed_table = _precompute_table;
+    use_precomputed_table = _use_precomputed_table;
 }
 
 /*********************************************************
@@ -229,7 +262,7 @@ void IndexIVFPQFastScan::compute_LUT(
                     if (cij >= 0) {
                         fvec_madd_simd(
                                 dim12,
-                                precomputed_table.get() + cij * dim12,
+                                precomputed_table->get() + cij * dim12,
                                 -2,
                                 ip_table.get() + i * dim12,
                                 tab);
